@@ -98,7 +98,7 @@ Copyright (c) 2022 Al Liu.
 [Github-url]: https://github.com/al8n/skl-rs/
 [CI-url]: https://github.com/al8n/skl-rs/actions/workflows/ci.yml
 [doc-url]: https://docs.rs/skl-rs
-[crates-url]: https://crates.io/crates/skl-rs
+[crates-url]: https://crates.io/crates/skl
 [codecov-url]: https://app.codecov.io/gh/al8n/skl-rs/
 [license-url]: https://opensource.org/licenses/Apache-2.0
 [rustc-url]: https://github.com/rust-lang/rust/blob/master/RELEASES.md
