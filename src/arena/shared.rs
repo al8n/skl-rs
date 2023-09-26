@@ -5,16 +5,14 @@ use core::{
   ptr, slice,
 };
 
-use crate::{
-  map::Node,
-  sync::{AtomicU32, AtomicUsize, Ordering},
-};
+use crate::sync::AtomicUsize;
 
 #[derive(Debug)]
 struct AlignedVec {
   ptr: ptr::NonNull<u8>,
   cap: usize,
   len: usize,
+  align: usize,
 }
 
 impl Drop for AlignedVec {
@@ -29,19 +27,15 @@ impl Drop for AlignedVec {
 }
 
 impl AlignedVec {
-  const ALIGNMENT: usize = core::mem::align_of::<Node>();
-
-  const MAX_CAPACITY: usize = isize::MAX as usize - (Self::ALIGNMENT - 1);
-
   #[inline]
-  fn new(capacity: usize) -> Self {
+  fn new(capacity: usize, align: usize) -> Self {
     assert!(
-      capacity <= Self::MAX_CAPACITY,
+      capacity <= Self::max_capacity(align),
       "`capacity` cannot exceed isize::MAX - {}",
-      Self::ALIGNMENT - 1
+      align - 1
     );
     let ptr = unsafe {
-      let layout = alloc::Layout::from_size_align_unchecked(capacity, Self::ALIGNMENT);
+      let layout = alloc::Layout::from_size_align_unchecked(capacity, align);
       let ptr = alloc::alloc(layout);
       if ptr.is_null() {
         alloc::handle_alloc_error(layout);
@@ -56,12 +50,18 @@ impl AlignedVec {
       ptr,
       cap: capacity,
       len: capacity,
+      align,
     }
   }
 
   #[inline]
+  const fn max_capacity(align: usize) -> usize {
+    isize::MAX as usize - (align - 1)
+  }
+
+  #[inline]
   fn layout(&self) -> alloc::Layout {
-    unsafe { alloc::Layout::from_size_align_unchecked(self.cap, Self::ALIGNMENT) }
+    unsafe { alloc::Layout::from_size_align_unchecked(self.cap, self.align) }
   }
 
   #[inline]
@@ -109,22 +109,18 @@ enum SharedBackend {
 }
 
 pub(super) struct Shared {
-  pub(super) n: AtomicU32,
   pub(super) refs: AtomicUsize,
   cap: usize,
   backend: SharedBackend,
 }
 
 impl Shared {
-  pub(super) fn new_vec(cap: usize) -> Self {
-    let vec = AlignedVec::new(cap);
+  pub(super) fn new_vec(cap: usize, align: usize) -> Self {
+    let vec = AlignedVec::new(cap, align);
     Self {
       cap: vec.cap,
       backend: SharedBackend::Vec(vec),
       refs: AtomicUsize::new(1),
-      // Don't store data at position 0 in order to reserve offset=0 as a kind
-      // of nil pointer.
-      n: AtomicU32::new(1),
     }
   }
 
@@ -141,19 +137,14 @@ impl Shared {
         memmapix::MmapOptions::new()
           .len(cap)
           .map_mut(&file)
-          .map(|mmap| {
-            Self {
-              cap,
-              backend: SharedBackend::Mmap {
-                buf: Box::into_raw(Box::new(mmap)),
-                file,
-                lock,
-              },
-              refs: AtomicUsize::new(1),
-              // Don't store data at position 0 in order to reserve offset=0 as a kind
-              // of nil pointer.
-              n: AtomicU32::new(1),
-            }
+          .map(|mmap| Self {
+            cap,
+            backend: SharedBackend::Mmap {
+              buf: Box::into_raw(Box::new(mmap)),
+              file,
+              lock,
+            },
+            refs: AtomicUsize::new(1),
           })
       })
     }
@@ -164,27 +155,11 @@ impl Shared {
     memmapix::MmapOptions::new()
       .len(cap)
       .map_anon()
-      .map(|mmap| {
-        Self {
-          cap,
-          backend: SharedBackend::AnonymousMmap(mmap),
-          refs: AtomicUsize::new(1),
-          // Don't store data at position 0 in order to reserve offset=0 as a kind
-          // of nil pointer.
-          n: AtomicU32::new(1),
-        }
+      .map(|mmap| Self {
+        cap,
+        backend: SharedBackend::AnonymousMmap(mmap),
+        refs: AtomicUsize::new(1),
       })
-  }
-
-  pub(super) fn as_slice(&self) -> &[u8] {
-    let end = self.n.load(Ordering::Acquire) as usize;
-    match &self.backend {
-      SharedBackend::Vec(vec) => &vec.as_slice()[..end],
-      #[cfg(feature = "mmap")]
-      SharedBackend::Mmap { buf: mmap, .. } => unsafe { &(&**mmap)[..end] },
-      #[cfg(feature = "mmap")]
-      SharedBackend::AnonymousMmap(mmap) => &mmap[..end],
-    }
   }
 
   pub(super) fn as_mut_ptr(&mut self) -> *mut u8 {
@@ -201,10 +176,12 @@ impl Shared {
   pub(super) const fn cap(&self) -> usize {
     self.cap
   }
-}
 
-impl Drop for Shared {
-  fn drop(&mut self) {
+  /// Only works on mmap with a file backend, unmounts the memory mapped file and truncates it to the specified size.
+  ///
+  /// ## Safety:
+  /// - This method must be invoked in the drop impl of `Arena`.
+  pub(super) unsafe fn unmount(&mut self, _size: usize) {
     #[cfg(feature = "mmap")]
     if let SharedBackend::Mmap { buf, file, lock } = &self.backend {
       use fs4::FileExt;
@@ -213,22 +190,19 @@ impl Drop for Shared {
       // to report them would be through panicking which is highly discouraged
       // in Drop impls, c.f. https://github.com/rust-lang/lang-team/issues/97
 
-      unsafe {
-        {
-          let mmap = &**buf;
-          let _ = mmap.flush();
-        }
+      {
+        let mmap = &**buf;
+        let _ = mmap.flush();
+      }
 
-        // we must trigger the drop of the mmap before truncating the file
-        drop(Box::from_raw(*buf));
+      // we must trigger the drop of the mmap before truncating the file
+      drop(Box::from_raw(*buf));
 
-        // relaxed ordering is enough here as we're in a drop, no one else can
-        // access this memory anymore.
-        let size = self.n.load(Ordering::Relaxed);
-        let _ = file.set_len(size as u64);
-        if *lock {
-          let _ = file.unlock();
-        }
+      // relaxed ordering is enough here as we're in a drop, no one else can
+      // access this memory anymore.
+      let _ = file.set_len(_size as u64);
+      if *lock {
+        let _ = file.unlock();
       }
     }
   }

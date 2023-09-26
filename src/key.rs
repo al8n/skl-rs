@@ -1,322 +1,313 @@
-use bytes::Bytes;
+use crate::KeyTrailer;
 
-pub(crate) const TIMESTAMP_SIZE: usize = core::mem::size_of::<u64>();
+/// Implement [badger's](https://github.com/dgraph-io/badger) key type
+pub mod badger;
 
-#[viewit::viewit(
-  vis_all = "pub(crate)",
-  setters(vis_all = "pub"),
-  getters(vis_all = "pub")
-)]
-#[derive(Debug, Copy, Clone)]
-pub struct KeyRef<'a> {
-  #[viewit(
-    getter(const, rename = "version"),
-    setter(const, rename = "with_version")
-  )]
-  expires_at: u64,
-  #[viewit(getter(const), setter(skip))]
-  data: &'a [u8],
+/// Gives the users the ability to define their own key type, rather than just slice.
+///
+/// For a key-value database, the key inserted by the end-users will always be encoded to a u8 array.
+/// But the key-value database developers are tend to add some extra information
+/// to the key provided by the end-users.
+/// e.g. ttl, version, tombstones, and etc.
+///
+/// This trait gives the key-value database developers the ability to add extra information
+/// to the key provided by the end-users by associated type [`Trailer`](crate::Trailer).
+///
+/// # Example
+///
+/// 1. The [`InternalKey`](https://github.com/cockroachdb/pebble/blob/master/internal/base/internal.go#L171) of [cockroachdb's pebble](https://github.com/cockroachdb/pebble) can be implemented by using this trait as:
+///
+///     ```rust,no_run
+///     #[repr(u64)]
+///     enum InternalKeyKind {
+///       Delete,
+///       Set,
+///       Merge,
+///       LogData,
+///       // ...
+///     }
+///
+///     #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+///     #[repr(transparent)]
+///     struct PebbleKeyTrailer(u64);
+///
+///     impl skl::KeyTrailer for PebbleKeyTrailer {}
+///
+///     impl PebbleKeyTrailer {
+///       fn make_trailer(seq_num: u64, kind: InternalKeyKind) -> u64 {
+///         (seq_num << 8) | (kind as u64)
+///       }
+///
+///       fn seq_num(&self) -> u64 {
+///         self.0 >> 8
+///       }
+///     }
+///
+///     struct PebbleKey {
+///       user_key: Vec<u8>,
+///       trailer: PebbleKeyTrailer,
+///     }
+///
+///     impl skl::Key for PebbleKey {
+///       type Trailer = PebbleKeyTrailer;
+///       
+///       fn as_bytes(&self) -> &[u8] {
+///         self.user_key.as_slice()
+///       }
+///
+///       fn trailer(&self) -> &Self::Trailer {
+///         &self.trailer
+///       }
+///     }
+///     ```
+///
+/// 2. The `Key` of [dgraph's badger](https://github.com/dgraph-io/badger) can be implemented by using this trait as:
+///   
+///     ```rust,no_run
+///
+///     struct BadgerKey {
+///       timestamp: u64,
+///       data: Vec<u8>,
+///     }
+///   
+///     impl skl::Key for BadgerKey {
+///       type Trailer = u64;
+///
+///       fn as_bytes(&self) -> &[u8] {
+///         self.data.as_slice()
+///       }
+///
+///       fn trailer(&self) -> &Self::Trailer {
+///         &self.timestamp
+///       }
+///     }
+///     ```
+pub trait Key {
+  /// Extra information should be added for the key provided by end-users.
+  type Trailer: KeyTrailer;
+
+  /// Returns the bytes of the key without the trailer.
+  fn as_bytes(&self) -> &[u8];
+
+  /// Returns the trailer of the key.
+  fn trailer(&self) -> &Self::Trailer;
 }
 
-impl<'a> AsRef<[u8]> for KeyRef<'a> {
-  fn as_ref(&self) -> &[u8] {
+impl Key for Vec<u8> {
+  type Trailer = ();
+
+  #[inline]
+  fn as_bytes(&self) -> &[u8] {
+    self.as_slice()
+  }
+
+  #[inline]
+  fn trailer(&self) -> &Self::Trailer {
+    &()
+  }
+}
+
+impl Key for Box<[u8]> {
+  type Trailer = ();
+
+  #[inline]
+  fn as_bytes(&self) -> &[u8] {
+    self.as_ref()
+  }
+
+  #[inline]
+  fn trailer(&self) -> &Self::Trailer {
+    &()
+  }
+}
+
+impl Key for ::alloc::sync::Arc<[u8]> {
+  type Trailer = ();
+
+  #[inline]
+  fn as_bytes(&self) -> &[u8] {
+    self.as_ref()
+  }
+
+  #[inline]
+  fn trailer(&self) -> &Self::Trailer {
+    &()
+  }
+}
+
+impl<const N: usize> Key for [u8; N] {
+  type Trailer = ();
+
+  #[inline]
+  fn as_bytes(&self) -> &[u8] {
+    self.as_ref()
+  }
+
+  #[inline]
+  fn trailer(&self) -> &Self::Trailer {
+    &()
+  }
+}
+
+impl<'a> Key for &'a [u8] {
+  type Trailer = ();
+
+  #[inline]
+  fn as_bytes(&self) -> &[u8] {
+    self
+  }
+
+  #[inline]
+  fn trailer(&self) -> &Self::Trailer {
+    &()
+  }
+}
+
+impl<'a> Key for &'a str {
+  type Trailer = ();
+
+  #[inline]
+  fn as_bytes(&self) -> &[u8] {
+    str::as_bytes(self)
+  }
+
+  #[inline]
+  fn trailer(&self) -> &Self::Trailer {
+    &()
+  }
+}
+
+impl Key for String {
+  type Trailer = ();
+
+  #[inline]
+  fn as_bytes(&self) -> &[u8] {
+    self.as_bytes()
+  }
+
+  #[inline]
+  fn trailer(&self) -> &Self::Trailer {
+    &()
+  }
+}
+
+#[cfg(feature = "bytes")]
+impl Key for bytes::Bytes {
+  type Trailer = ();
+
+  #[inline]
+  fn as_bytes(&self) -> &[u8] {
+    self.as_ref()
+  }
+
+  #[inline]
+  fn trailer(&self) -> &Self::Trailer {
+    &()
+  }
+}
+
+#[cfg(feature = "smallvec")]
+impl<A: smallvec::Array<Item = u8>> Key for smallvec::SmallVec<A> {
+  type Trailer = ();
+
+  #[inline]
+  fn as_bytes(&self) -> &[u8] {
+    self.as_slice()
+  }
+
+  #[inline]
+  fn trailer(&self) -> &Self::Trailer {
+    &()
+  }
+}
+
+#[cfg(feature = "smol_str")]
+impl Key for smol_str::SmolStr {
+  type Trailer = ();
+
+  #[inline]
+  fn as_bytes(&self) -> &[u8] {
+    str::as_bytes(self.as_str())
+  }
+
+  #[inline]
+  fn trailer(&self) -> &Self::Trailer {
+    &()
+  }
+}
+
+/// The key reference
+pub struct KeyRef<'a, K: Key> {
+  data: &'a [u8],
+  trailer: K::Trailer,
+}
+
+impl<'a, K: Key> Clone for KeyRef<'a, K> {
+  #[inline]
+  fn clone(&self) -> Self {
+    *self
+  }
+}
+
+impl<'a, K: Key> Copy for KeyRef<'a, K> {}
+
+impl<'a, K: Key> KeyRef<'a, K> {
+  /// Creates a new key reference directly from the given bytes and trailer.
+  #[inline]
+  pub const fn new(data: &'a [u8], trailer: K::Trailer) -> Self {
+    Self { data, trailer }
+  }
+
+  /// Returns the bytes of the key without the trailer.
+  #[inline]
+  pub const fn as_bytes(&self) -> &[u8] {
     self.data
   }
-}
 
-impl<'a> core::ops::Deref for KeyRef<'a> {
-  type Target = [u8];
-
-  fn deref(&self) -> &Self::Target {
-    self.as_ref()
-  }
-}
-
-impl<'a> KeyRef<'a> {
+  /// Returns the trailer of the key.
   #[inline]
-  pub const fn new(src: &'a [u8]) -> Self {
-    Self {
-      expires_at: 0,
-      data: src,
-    }
+  pub const fn trailer(&self) -> &K::Trailer {
+    &self.trailer
   }
+
+  /// Returns the encoded size of the key part.
+  #[inline]
+  pub(crate) fn encoded_size(&self) -> usize {
+    self.data.len()
+  }
+}
+
+impl<'a, K: Key> Key for KeyRef<'a, K> {
+  type Trailer = K::Trailer;
 
   #[inline]
-  pub fn into_owned(&self) -> Key {
-    Key {
-      expires_at: self.expires_at,
-      data: Bytes::copy_from_slice(self.data),
-    }
-  }
-}
-
-impl<'a> PartialEq for KeyRef<'a> {
-  fn eq(&self, other: &Self) -> bool {
-    self.data == other.data && self.expires_at == other.expires_at
-  }
-}
-
-impl<'a> Eq for KeyRef<'a> {}
-
-impl<'a> PartialOrd for KeyRef<'a> {
-  fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-    Some(self.cmp(other))
-  }
-}
-
-impl<'a> Ord for KeyRef<'a> {
-  fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-    self
-      .data
-      .cmp(other.data)
-      .then_with(|| self.expires_at.cmp(&other.expires_at))
-  }
-}
-
-impl<'a> From<&'a [u8]> for KeyRef<'a> {
-  fn from(data: &'a [u8]) -> Self {
-    Self {
-      data,
-      expires_at: 0,
-    }
-  }
-}
-
-impl<'a> From<&'a str> for KeyRef<'a> {
-  fn from(data: &'a str) -> Self {
-    Self {
-      data: data.as_bytes(),
-      expires_at: 0,
-    }
-  }
-}
-
-#[viewit::viewit(vis_all = "", setters(vis_all = "pub"), getters(vis_all = "pub"))]
-#[derive(Debug, Clone)]
-pub struct Key {
-  #[viewit(
-    getter(const, rename = "version"),
-    setter(const, rename = "with_version")
-  )]
-  expires_at: u64,
-  #[viewit(getter(const, style = "ref"), setter(skip))]
-  data: Bytes,
-}
-
-impl AsRef<[u8]> for Key {
-  fn as_ref(&self) -> &[u8] {
-    self.data.as_ref()
-  }
-}
-
-impl core::ops::Deref for Key {
-  type Target = [u8];
-
-  fn deref(&self) -> &Self::Target {
-    self.as_ref()
-  }
-}
-
-impl PartialEq for Key {
-  fn eq(&self, other: &Self) -> bool {
-    self.data == other.data && self.expires_at == other.expires_at
-  }
-}
-
-impl Eq for Key {}
-
-impl core::hash::Hash for Key {
-  fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-    self.data.hash(state);
-  }
-}
-
-impl PartialOrd for Key {
-  fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-    Some(self.cmp(other))
-  }
-}
-
-impl Ord for Key {
-  fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-    self
-      .data
-      .cmp(&other.data)
-      .then_with(|| self.expires_at.cmp(&other.expires_at))
-  }
-}
-
-impl Default for Key {
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
-impl Key {
-  #[inline]
-  pub const fn new() -> Self {
-    Self {
-      data: Bytes::new(),
-      expires_at: 0,
-    }
+  fn as_bytes(&self) -> &[u8] {
+    self.data
   }
 
   #[inline]
-  pub const fn from_bytes(b: Bytes) -> Self {
-    Self {
-      data: b,
-      expires_at: 0,
-    }
+  fn trailer(&self) -> &Self::Trailer {
+    &self.trailer
   }
+}
+
+/// A trait for types that can be converted to a key reference. [`KeyRef`](crate::KeyRef) is the key used to insert to the skiplist.
+pub trait AsKeyRef {
+  /// The key type.
+  type Key: Key;
+
+  /// Converts the given key to a key reference.
+  fn as_key_ref(&self) -> KeyRef<Self::Key>;
+}
+
+impl<K: Key> AsKeyRef for K {
+  type Key = K;
 
   #[inline]
-  pub fn as_key_ref(&self) -> KeyRef {
+  fn as_key_ref(&self) -> KeyRef<K> {
     KeyRef {
-      expires_at: self.expires_at,
-      data: self.data.as_ref(),
+      data: self.as_bytes(),
+      trailer: *self.trailer(),
     }
-  }
-
-  /// Destruct the key, returns key and ttl of the key.
-  #[inline]
-  pub fn into_components(self) -> (Bytes, u64) {
-    (self.data, self.expires_at)
-  }
-
-  #[inline]
-  pub fn set_ttl(&mut self, ttl: u64) {
-    self.expires_at = ttl;
-  }
-
-  /// Returns a key, with the current timestamp (in milliseconds)
-  #[cfg(feature = "std")]
-  #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-  pub fn with_now(src: Bytes) -> Self {
-    Self {
-      data: src,
-      expires_at: std::time::SystemTime::UNIX_EPOCH
-        .elapsed()
-        .unwrap()
-        .as_millis() as u64,
-    }
-  }
-}
-
-impl From<Bytes> for Key {
-  fn from(data: Bytes) -> Self {
-    Self {
-      data,
-      expires_at: 0,
-    }
-  }
-}
-
-impl<'a> From<&'a [u8]> for Key {
-  fn from(data: &'a [u8]) -> Self {
-    Self {
-      data: Bytes::copy_from_slice(data),
-      expires_at: 0,
-    }
-  }
-}
-
-impl<'a> From<&'a str> for Key {
-  fn from(data: &str) -> Self {
-    Self {
-      data: Bytes::copy_from_slice(data.as_bytes()),
-      expires_at: 0,
-    }
-  }
-}
-
-impl From<String> for Key {
-  fn from(data: String) -> Self {
-    Self {
-      data: data.into(),
-      expires_at: 0,
-    }
-  }
-}
-
-impl From<&Key> for Key {
-  fn from(key: &Key) -> Self {
-    Self {
-      data: key.data.clone(),
-      expires_at: key.expires_at,
-    }
-  }
-}
-
-impl From<Key> for Bytes {
-  fn from(key: Key) -> Self {
-    key.data
-  }
-}
-
-impl From<&Key> for Bytes {
-  fn from(key: &Key) -> Self {
-    key.data.clone()
-  }
-}
-
-impl From<Vec<u8>> for Key {
-  fn from(data: Vec<u8>) -> Self {
-    Self {
-      data: data.into(),
-      expires_at: 0,
-    }
-  }
-}
-
-impl From<Box<[u8]>> for Key {
-  fn from(data: Box<[u8]>) -> Self {
-    Self {
-      data: data.into(),
-      expires_at: 0,
-    }
-  }
-}
-
-impl From<&Bytes> for Key {
-  fn from(data: &Bytes) -> Self {
-    Self {
-      data: data.clone(),
-      expires_at: 0,
-    }
-  }
-}
-
-impl<'a> PartialEq<KeyRef<'a>> for Key {
-  fn eq(&self, other: &KeyRef<'a>) -> bool {
-    self.data == other.data && self.expires_at == other.expires_at
-  }
-}
-
-impl<'a> PartialEq<Key> for KeyRef<'a> {
-  fn eq(&self, other: &Key) -> bool {
-    self.data == other.data && self.expires_at == other.expires_at
-  }
-}
-
-impl<'a> PartialOrd<KeyRef<'a>> for Key {
-  fn partial_cmp(&self, other: &KeyRef<'a>) -> Option<core::cmp::Ordering> {
-    Some(
-      self
-        .data
-        .as_ref()
-        .cmp(other.data)
-        .then_with(|| self.expires_at.cmp(&other.expires_at)),
-    )
-  }
-}
-
-impl<'a> PartialOrd<Key> for KeyRef<'a> {
-  fn partial_cmp(&self, other: &Key) -> Option<core::cmp::Ordering> {
-    Some(
-      self
-        .data
-        .cmp(&other.data)
-        .then_with(|| self.expires_at.cmp(&other.expires_at)),
-    )
   }
 }

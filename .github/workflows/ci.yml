@@ -149,7 +149,7 @@ jobs:
       - name: Install rust-src
         run: rustup component add rust-src
       - name: ASAN / LSAN / TSAN
-        run: . ci/sanitizer.sh
+        run: ci/sanitizer.sh
 
   # valgrind
   valgrind:
