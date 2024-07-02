@@ -400,7 +400,7 @@ impl<T> Node<T> {
     arena: &'a Arena,
     trailer: T,
     value_size: u32,
-    f: impl FnOnce(&mut VacantBuffer<'a>) -> Result<(), E>,
+    f: &impl Fn(&mut VacantBuffer<'a>) -> Result<(), E>,
   ) -> Result<(), Either<E, Error>> {
     let mut bytes = arena
       .alloc_aligned_bytes::<T>(value_size)
@@ -1151,7 +1151,7 @@ impl<T: Trailer, C> SkipMap<T, C> {
     key: &Key<'a, 'b>,
     trailer: T,
     value_size: u32,
-    f: impl FnOnce(&mut VacantBuffer<'a>) -> Result<(), E>,
+    f: &impl Fn(&mut VacantBuffer<'a>) -> Result<(), E>,
   ) -> Result<(NodePtr<T>, u32, Deallocator), Either<E, Error>> {
     let height = super::random_height(self.opts.max_height().into());
     let (nd, deallocator) = match key {
@@ -1732,7 +1732,7 @@ impl<T: Trailer, C: Comparator> SkipMap<T, C> {
     trailer: T,
     key: Key<'a, 'b>,
     value_size: u32,
-    f: impl FnOnce(&mut VacantBuffer<'a>) -> Result<(), E> + Copy,
+    f: impl Fn(&mut VacantBuffer<'a>) -> Result<(), E>,
     success: Ordering,
     failure: Ordering,
     ins: &mut Inserter<T>,
@@ -1751,7 +1751,7 @@ impl<T: Trailer, C: Comparator> SkipMap<T, C> {
 
         if upsert {
           return self.upsert(
-            old, node_ptr, &key, trailer, value_size, f, success, failure,
+            old, node_ptr, &key, trailer, value_size, &f, success, failure,
           );
         }
 
@@ -1792,10 +1792,11 @@ impl<T: Trailer, C: Comparator> SkipMap<T, C> {
       }
     };
 
-    let (nd, height, mut deallocator) = self.new_node(&k, trailer, value_size, f).map_err(|e| {
-      k.on_fail(&self.arena);
-      e
-    })?;
+    let (nd, height, mut deallocator) =
+      self.new_node(&k, trailer, value_size, &f).map_err(|e| {
+        k.on_fail(&self.arena);
+        e
+      })?;
 
     // We always insert from the base level and up. After you add a node in base
     // level, we cannot create a node in the level above because it would have
@@ -1913,7 +1914,7 @@ impl<T: Trailer, C: Comparator> SkipMap<T, C> {
 
                 if upsert {
                   deallocator.dealloc(&self.arena);
-                  return self.upsert(old, node_ptr, &k, trailer, value_size, f, success, failure);
+                  return self.upsert(old, node_ptr, &k, trailer, value_size, &f, success, failure);
                 }
 
                 deallocator.dealloc(&self.arena);
@@ -1973,7 +1974,7 @@ impl<T: Trailer, C: Comparator> SkipMap<T, C> {
     key: &Key<'a, 'b>,
     trailer: T,
     value_size: u32,
-    f: impl FnOnce(&mut VacantBuffer<'a>) -> Result<(), E>,
+    f: &impl Fn(&mut VacantBuffer<'a>) -> Result<(), E>,
     success: Ordering,
     failure: Ordering,
   ) -> Result<UpdateOk<'a, 'b, T, C>, Either<E, Error>> {

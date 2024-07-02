@@ -1502,8 +1502,7 @@ fn test_concurrent_one_key_map_mut() {
     let open_options = OpenOptions::default()
       .create(Some(ARENA_SIZE as u32))
       .read(true)
-      .write(true)
-      .shrink_on_drop(true);
+      .write(true);
     let map_options = MmapOptions::default();
     concurrent_one_key(Arc::new(
       SkipMap::map_mut(p, open_options, map_options)
@@ -2301,7 +2300,7 @@ fn test_reopen_mmap() {
       l.flush().unwrap();
     }
 
-    let open_options = OpenOptions::default().read(true).shrink_on_drop(true);
+    let open_options = OpenOptions::default().read(true);
     let map_options = MmapOptions::default();
     let l = SkipMap::<u64>::map(&p, open_options, map_options, 0).unwrap();
     assert_eq!(1000, l.len());

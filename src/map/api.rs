@@ -536,7 +536,7 @@ impl<T: Trailer, C: Comparator> SkipMap<T, C> {
     trailer: T,
     key: &'b [u8],
     value_size: u32,
-    f: impl FnOnce(&mut VacantBuffer<'a>) -> Result<(), E> + Copy,
+    f: impl Fn(&mut VacantBuffer<'a>) -> Result<(), E>,
   ) -> Result<Option<EntryRef<'a, T, C>>, Either<E, Error>> {
     if self.arena.read_only() {
       return Err(Either::Right(Error::read_only()));
@@ -660,7 +660,7 @@ impl<T: Trailer, C: Comparator> SkipMap<T, C> {
     trailer: T,
     key: &'b [u8],
     value_size: u32,
-    f: impl FnOnce(&mut VacantBuffer<'a>) -> Result<(), E> + Copy,
+    f: impl Fn(&mut VacantBuffer<'a>) -> Result<(), E>,
   ) -> Result<Option<EntryRef<'a, T, C>>, Either<E, Error>> {
     if self.arena.read_only() {
       return Err(Either::Right(Error::read_only()));
@@ -742,7 +742,7 @@ impl<T: Trailer, C: Comparator> SkipMap<T, C> {
     key_size: u27,
     key: impl FnOnce(&mut VacantBuffer<'a>) -> Result<(), E>,
     val_size: u32,
-    val: impl FnOnce(&mut VacantBuffer<'a>) -> Result<(), E> + Copy,
+    val: impl Fn(&mut VacantBuffer<'a>) -> Result<(), E>,
   ) -> Result<Option<EntryRef<'a, T, C>>, Either<E, Error>> {
     let vk = self.fetch_vacant_key(u32::from(key_size), key)?;
 
@@ -820,7 +820,7 @@ impl<T: Trailer, C: Comparator> SkipMap<T, C> {
     key_size: u27,
     key: impl FnOnce(&mut VacantBuffer<'a>) -> Result<(), E>,
     val_size: u32,
-    val: impl FnOnce(&mut VacantBuffer<'a>) -> Result<(), E> + Copy,
+    val: impl Fn(&mut VacantBuffer<'a>) -> Result<(), E>,
   ) -> Result<Option<EntryRef<'a, T, C>>, Either<E, Error>> {
     let vk = self.fetch_vacant_key(u32::from(key_size), key)?;
 
