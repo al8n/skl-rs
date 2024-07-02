@@ -763,7 +763,7 @@ impl<T, C> SkipMap<T, C> {
           trailer_offset as u32,
           trailer_and_value.capacity() as u32,
           key_offset as u32,
-          self.arena.get_bytes(key_offset, key_cap),
+          node_ref.get_key(&self.arena),
           value_size,
           value_offset,
           vf,
@@ -937,7 +937,7 @@ impl<T, C> SkipMap<T, C> {
           trailer_offset as u32,
           trailer_and_value.capacity() as u32,
           key_offset,
-          self.arena.get_bytes(key_offset as usize, key_size as usize),
+          node_ref.get_key(&self.arena),
           value_size,
           value_offset,
           vf,
@@ -1765,7 +1765,6 @@ impl<T: Trailer, C: Comparator> SkipMap<T, C> {
             old,
             node_ptr,
             node.key_offset,
-            node.key_size(),
             &key,
             trailer,
             value_size,
@@ -1938,7 +1937,6 @@ impl<T: Trailer, C: Comparator> SkipMap<T, C> {
                     old,
                     node_ptr,
                     node.key_offset,
-                    node.key_size(),
                     &k,
                     trailer,
                     value_size,
@@ -2003,7 +2001,6 @@ impl<T: Trailer, C: Comparator> SkipMap<T, C> {
     old: VersionedEntryRef<'a, T, C>,
     node_ptr: NodePtr<T>,
     key_offset: u32,
-    key_len: u32,
     key: &Key<'a, 'b>,
     trailer: T,
     value_size: u32,
@@ -2011,20 +2008,19 @@ impl<T: Trailer, C: Comparator> SkipMap<T, C> {
     success: Ordering,
     failure: Ordering,
   ) -> Result<UpdateOk<'a, 'b, T, C>, Either<E, Error>> {
+    let node = node_ptr.as_ref();
     match key {
-      Key::Occupied(_) | Key::Vacant(_) | Key::Pointer { .. } => node_ptr
-        .as_ref()
+      Key::Occupied(_) | Key::Vacant(_) | Key::Pointer { .. } => node
         .set_value(
           &self.arena,
           trailer,
           key_offset,
-          self.arena.get_bytes(key_offset as usize, key_len as usize),
+          node.get_key(&self.arena),
           value_size,
           f,
         )
         .map(|_| Either::Left(if old.is_removed() { None } else { Some(old) })),
       Key::Remove(_) | Key::RemoveVacant(_) | Key::RemovePointer { .. } => {
-        let node = node_ptr.as_ref();
         let key = node.get_key(&self.arena);
         match node.clear_value(&self.arena, success, failure) {
           Ok(_) => Ok(Either::Left(None)),
